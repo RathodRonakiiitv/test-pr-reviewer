@@ -101,7 +101,7 @@ jobs:
             
             // Call Gemini API
             core.info('Calling Gemini API...');
-            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
             
             const prompt = `You are a senior Python code reviewer. Analyze the following Pull Request changes and provide a thorough code review.
 
