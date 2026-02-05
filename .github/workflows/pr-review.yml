@@ -18,7 +18,7 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         with:
           script: |
-            const core = require('@actions/core');
+            // core is already available in github-script
             
             core.info('=== Starting AI Code Review ===');
             core.info(`PR Number: ${context.issue.number}`);
