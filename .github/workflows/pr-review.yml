@@ -3,12 +3,11 @@ name: AI Code Review
 permissions:
   contents: read
   pull-requests: write
+  issues: write
 
 on:
   pull_request:
     types: [opened, synchronize, reopened]
-  pull_request_review_comment:
-    types: [created]
 
 concurrency:
   group: ${{ github.repository }}-${{ github.event.number || github.head_ref || github.sha }}-${{ github.workflow }}
@@ -23,10 +22,16 @@ jobs:
         with:
           fetch-depth: 0
           
-      - name: AI Code Review with Gemini
-        uses: truongnh1992/gemini-ai-code-reviewer@v1.3
+      - name: Run Gemini Code Review
+        uses: google-github-actions/run-gemini-cli@main
         with:
           gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          gemini_model: gemini-1.5-flash
-          exclude_patterns: "*.md,*.json,*.yaml,*.yml"
+          prompt: |
+            Review the code changes in this pull request.
+            Focus on:
+            1. Potential bugs and errors
+            2. Security vulnerabilities
+            3. Performance issues
+            4. Code style and best practices
+            
+            Provide specific, actionable feedback with code suggestions where applicable.
