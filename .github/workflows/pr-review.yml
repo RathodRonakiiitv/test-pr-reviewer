@@ -11,17 +11,22 @@ on:
     types: [created]
 
 concurrency:
-  group: ${{ github.repository }}-${{ github.event.number || github.head_ref || github.sha }}-${{ github.workflow }}-${{ github.event_name == 'pull_request_review_comment' && 'pr_comment' || 'pr' }}
-  cancel-in-progress: ${{ github.event_name != 'pull_request_review_comment' }}
+  group: ${{ github.repository }}-${{ github.event.number || github.head_ref || github.sha }}-${{ github.workflow }}
+  cancel-in-progress: true
 
 jobs:
   review:
     runs-on: ubuntu-latest
     steps:
-      - uses: x86nick/openai-pr-reviewer@main
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      - name: Checkout code
+        uses: actions/checkout@v4
         with:
-          debug: true
-          review_comment_lgtm: false
+          fetch-depth: 0
+          
+      - name: AI Code Review with Gemini
+        uses: truongnh1992/gemini-ai-code-reviewer@v1.3
+        with:
+          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          gemini_model: gemini-1.5-flash
+          exclude_patterns: "*.md,*.json,*.yaml,*.yml"
