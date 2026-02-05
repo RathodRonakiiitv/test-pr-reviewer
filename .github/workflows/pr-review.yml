@@ -7,21 +7,166 @@ permissions:
 on:
   pull_request:
     types: [opened, synchronize, reopened]
-  pull_request_review_comment:
-    types: [created]
-
-concurrency:
-  group: ${{ github.repository }}-${{ github.event.number || github.head_ref || github.sha }}-${{ github.workflow }}-${{ github.event_name == 'pull_request_review_comment' && 'pr_comment' || 'pr' }}
-  cancel-in-progress: ${{ github.event_name != 'pull_request_review_comment' }}
 
 jobs:
   review:
     runs-on: ubuntu-latest
     steps:
-      - uses: x86nick/openai-pr-reviewer@main
+      - name: Get PR Diff and Review
+        uses: actions/github-script@v7
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         with:
-          debug: true
-          review_comment_lgtm: false
+          script: |
+            // core is already available in github-script
+            
+            core.info('=== Starting AI Code Review ===');
+            core.info(`PR Number: ${context.issue.number}`);
+            core.info(`Repository: ${context.repo.owner}/${context.repo.repo}`);
+            
+            // Post a starting comment to verify permissions
+            try {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: `## 🤖 AI Code Review\n\n⏳ Starting code review...`
+              });
+              core.info('Starting comment posted successfully');
+            } catch (e) {
+              core.error(`Failed to post starting comment: ${e.message}`);
+            }
+            
+            // Check API key
+            const apiKey = process.env.GEMINI_API_KEY;
+            core.info(`API Key exists: ${!!apiKey}`);
+            core.info(`API Key length: ${apiKey?.length || 0}`);
+            
+            if (!apiKey) {
+              core.error('GEMINI_API_KEY not set!');
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: `## 🤖 AI Code Review\n\n⚠️ **Error:** GEMINI_API_KEY secret is not configured.\n\nPlease add your Gemini API key to the repository secrets.`
+              });
+              return;
+            }
+            
+            // Get PR files using GitHub API (more reliable than git diff)
+            core.info('Fetching PR files...');
+            const { data: files } = await github.rest.pulls.listFiles({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+              per_page: 100
+            });
+            
+            core.info(`Total files in PR: ${files.length}`);
+            
+            // Filter for Python files
+            const pyFiles = files.filter(f => f.filename.endsWith('.py'));
+            core.info(`Python files: ${pyFiles.length}`);
+            
+            if (pyFiles.length === 0) {
+              core.info('No Python files found to review');
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: `## 🤖 AI Code Review\n\nNo Python files found in this PR.`
+              });
+              return;
+            }
+            
+            // Build diff content from PR files
+            let diffContent = '';
+            for (const file of pyFiles) {
+              core.info(`Processing: ${file.filename} Status: ${file.status}`);
+              diffContent += `\n### File: ${file.filename}\n`;
+              diffContent += `Status: ${file.status}\n`;
+              diffContent += `Changes: +${file.additions} -${file.deletions}\n\n`;
+              if (file.patch) {
+                diffContent += '```diff\n' + file.patch + '\n```\n';
+              }
+            }
+            
+            core.info(`Diff content length: ${diffContent.length}`);
+            core.info(`First 500 chars: ${diffContent.substring(0, 500)}`);
+            
+            if (diffContent.length < 10) {
+              core.info('No substantial changes to review');
+              return;
+            }
+            
+            // Call Gemini API
+            core.info('Calling Gemini API...');
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+            
+            const prompt = `You are a senior Python code reviewer. Analyze the following Pull Request changes and provide a thorough code review.
+
+            Focus on:
+            1. **Bugs and Logic Errors** - Identify any potential runtime errors, edge cases, or incorrect logic
+            2. **Security Issues** - Look for vulnerabilities like injection attacks, unsafe operations
+            3. **Error Handling** - Check for missing try/except blocks, unhandled edge cases
+            4. **Best Practices** - Suggest improvements for code quality, readability, and maintainability
+
+            Provide specific, actionable feedback with line references where applicable.
+
+            PR Changes:
+            ${diffContent}`;
+            
+            try {
+              const response = await fetch(apiUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  contents: [{
+                    parts: [{ text: prompt }]
+                  }]
+                })
+              });
+              
+              core.info(`API Response status: ${response.status}`);
+              const data = await response.json();
+              
+              if (data.error) {
+                core.error(`API Error: ${JSON.stringify(data.error)}`);
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                  body: `## 🤖 AI Code Review\n\n⚠️ **API Error:** ${data.error.message}\n\n*Please verify your GEMINI_API_KEY is valid.*`
+                });
+                return;
+              }
+              
+              const review = data.candidates?.[0]?.content?.parts?.[0]?.text;
+              core.info(`Review generated, length: ${review?.length || 0}`);
+              
+              if (!review) {
+                core.warning('No review content generated');
+                core.info(`Full response: ${JSON.stringify(data).substring(0, 500)}`);
+                return;
+              }
+              
+              // Post comment
+              core.info('Posting review comment...');
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: `## 🤖 AI Code Review (Gemini)\n\n${review}\n\n---\n*Powered by Google Gemini AI*`
+              });
+              
+              core.info('✅ Review posted successfully!');
+              
+            } catch (error) {
+              core.error(`Error: ${error.message}`);
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: `## 🤖 AI Code Review\n\n⚠️ **Error:** ${error.message}`
+              });
+            }
