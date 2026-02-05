@@ -18,17 +18,32 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         with:
           script: |
-            console.log('=== Starting AI Code Review ===');
-            console.log('PR Number:', context.issue.number);
-            console.log('Repository:', context.repo.owner + '/' + context.repo.repo);
+            const core = require('@actions/core');
+            
+            core.info('=== Starting AI Code Review ===');
+            core.info(`PR Number: ${context.issue.number}`);
+            core.info(`Repository: ${context.repo.owner}/${context.repo.repo}`);
+            
+            // Post a starting comment to verify permissions
+            try {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: `## 🤖 AI Code Review\n\n⏳ Starting code review...`
+              });
+              core.info('Starting comment posted successfully');
+            } catch (e) {
+              core.error(`Failed to post starting comment: ${e.message}`);
+            }
             
             // Check API key
             const apiKey = process.env.GEMINI_API_KEY;
-            console.log('API Key exists:', !!apiKey);
-            console.log('API Key length:', apiKey?.length || 0);
+            core.info(`API Key exists: ${!!apiKey}`);
+            core.info(`API Key length: ${apiKey?.length || 0}`);
             
             if (!apiKey) {
-              console.log('ERROR: GEMINI_API_KEY not set!');
+              core.error('GEMINI_API_KEY not set!');
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -39,7 +54,7 @@ jobs:
             }
             
             // Get PR files using GitHub API (more reliable than git diff)
-            console.log('Fetching PR files...');
+            core.info('Fetching PR files...');
             const { data: files } = await github.rest.pulls.listFiles({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -47,14 +62,14 @@ jobs:
               per_page: 100
             });
             
-            console.log('Total files in PR:', files.length);
+            core.info(`Total files in PR: ${files.length}`);
             
             // Filter for Python files
             const pyFiles = files.filter(f => f.filename.endsWith('.py'));
-            console.log('Python files:', pyFiles.length);
+            core.info(`Python files: ${pyFiles.length}`);
             
             if (pyFiles.length === 0) {
-              console.log('No Python files to review');
+              core.info('No Python files found to review');
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -67,7 +82,7 @@ jobs:
             // Build diff content from PR files
             let diffContent = '';
             for (const file of pyFiles) {
-              console.log('Processing:', file.filename, 'Status:', file.status);
+              core.info(`Processing: ${file.filename} Status: ${file.status}`);
               diffContent += `\n### File: ${file.filename}\n`;
               diffContent += `Status: ${file.status}\n`;
               diffContent += `Changes: +${file.additions} -${file.deletions}\n\n`;
@@ -76,16 +91,16 @@ jobs:
               }
             }
             
-            console.log('Diff content length:', diffContent.length);
-            console.log('First 500 chars:', diffContent.substring(0, 500));
+            core.info(`Diff content length: ${diffContent.length}`);
+            core.info(`First 500 chars: ${diffContent.substring(0, 500)}`);
             
             if (diffContent.length < 10) {
-              console.log('No substantial changes to review');
+              core.info('No substantial changes to review');
               return;
             }
             
             // Call Gemini API
-            console.log('Calling Gemini API...');
+            core.info('Calling Gemini API...');
             const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
             
             const prompt = `You are a senior Python code reviewer. Analyze the following Pull Request changes and provide a thorough code review.
@@ -112,11 +127,11 @@ jobs:
                 })
               });
               
-              console.log('API Response status:', response.status);
+              core.info(`API Response status: ${response.status}`);
               const data = await response.json();
               
               if (data.error) {
-                console.log('API Error:', JSON.stringify(data.error));
+                core.error(`API Error: ${JSON.stringify(data.error)}`);
                 await github.rest.issues.createComment({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
@@ -127,16 +142,16 @@ jobs:
               }
               
               const review = data.candidates?.[0]?.content?.parts?.[0]?.text;
-              console.log('Review generated, length:', review?.length || 0);
+              core.info(`Review generated, length: ${review?.length || 0}`);
               
               if (!review) {
-                console.log('No review content generated');
-                console.log('Full response:', JSON.stringify(data).substring(0, 500));
+                core.warning('No review content generated');
+                core.info(`Full response: ${JSON.stringify(data).substring(0, 500)}`);
                 return;
               }
               
               // Post comment
-              console.log('Posting review comment...');
+              core.info('Posting review comment...');
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -144,10 +159,10 @@ jobs:
                 body: `## 🤖 AI Code Review (Gemini)\n\n${review}\n\n---\n*Powered by Google Gemini AI*`
               });
               
-              console.log('✅ Review posted successfully!');
+              core.info('✅ Review posted successfully!');
               
             } catch (error) {
-              console.log('Error:', error.message);
+              core.error(`Error: ${error.message}`);
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
