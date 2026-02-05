@@ -20,6 +20,11 @@ def divide(a, b):
         raise ValueError("Cannot divide by zero!")
     return a / b
 
+def modulo(a, b):
+    """Calculate remainder of a divided by b"""
+    # Bug: doesn't handle b == 0
+    return a % b
+
 def power(base, exponent):
     """Calculate base raised to the power of exponent"""
     # This implementation has a potential issue with negative exponents
